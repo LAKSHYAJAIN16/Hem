@@ -82,3 +82,13 @@ API photo mode. Reference attributes guide owned-wardrobe selection without impo
 the photographed garments. Existing unconfirmed photo drafts can also be used as
 references with `style photo <ID>`. Added owner-isolation and no-import regressions;
 the complete suite passes 21 tests.
+
+## 2026-09-19 — Conversational wardrobe input
+
+Added an OpenAI intent router for natural ownership statements, inferred garment
+categories, photo corrections and confirmations, availability updates, preferences,
+and location changes. Photo dialogue focus scopes short confirmations to the current
+discussion. Natural wardrobe replies omit internal IDs and category syntax. Added
+Toronto as the default weather location and retained explicit location override/opt-out.
+The suite passes 26 tests including natural descriptions, corrections, stale-confirmation
+protection, router context, and weather defaults.

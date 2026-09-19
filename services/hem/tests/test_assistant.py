@@ -13,6 +13,7 @@ from hem.assistant import Assistant
 from hem.media import load_image, validate_image
 from hem.sources import import_feed, fetch_feed
 from hem.weather import Weather
+from hem.conversation import intent
 from hem.store import Store
 
 IMAGE = 'data:image/png;base64,' + base64.b64encode(b'\x89PNG\r\n\x1a\nfixture').decode()
@@ -51,14 +52,25 @@ class FakeWeather:
                 'rain_chance': 80, 'timezone': 'America/Toronto', 'source_url': 'https://open-meteo.com/'}
 
 
+@pytest.fixture(autouse=True)
+def isolated_weather(monkeypatch):
+    monkeypatch.setattr('hem.assistant.Weather', FakeWeather)
+
+
+def latest_draft(store):
+    with store.connect() as db:
+        return db.execute('SELECT id FROM photo_drafts ORDER BY rowid DESC LIMIT 1').fetchone()[0]
+
+
 def test_multi_garment_photo_requires_confirmation_and_is_idempotent(tmp_path):
     store = Store(tmp_path / 'hem.db')
     ai = FakeAI()
     engine = Assistant(store, ai=ai)
     reply = run(engine.reply('alice', 'my wardrobe', [IMAGE], request_id='photo-event'))
-    draft = re.search(r'Photo ([a-f0-9]{10})', reply)[1]
+    draft = latest_draft(store)
     assert len(store.snapshot('alice')['wardrobe']) == 0
-    assert '1. navy sweater' in reply and '2. blue trousers' in reply
+    assert 'navy sweater' in reply and 'blue trousers' in reply
+    assert draft not in reply and 'confirm photo' not in reply
     assert run(engine.reply('alice', 'my wardrobe', [IMAGE], request_id='photo-event')) == reply
     assert ai.photo_calls == 1
     assert 'not in' in run(engine.reply('bob', f'confirm photo {draft}'))
@@ -187,7 +199,7 @@ def test_photo_and_feed_api_auth_scope(tmp_path, monkeypatch):
     with TestClient(create_app(path, assistant=engine)) as client:
         assert client.get('/dev/wardrobe/a').status_code == 403
         reply = client.post('/dev/chat', headers=headers, json={'user_id': 'a', 'images': [IMAGE]}).json()['reply']
-        draft = re.search(r'Photo ([a-f0-9]{10})', reply)[1]
+        draft = latest_draft(engine.store)
         client.post('/dev/chat', headers=headers, json={'user_id': 'a', 'text': 'confirm photo ' + draft})
         snapshot = client.get('/dev/wardrobe/a', headers=headers).json()
         asset_id = snapshot['details'][0]['asset_id']
@@ -278,9 +290,76 @@ def test_existing_draft_can_be_styled_without_confirmation(tmp_path):
     ai = FakeAI()
     engine = Assistant(store, ai=ai)
     reply = run(engine.reply('a', '', [IMAGE]))
-    draft = re.search(r'Photo ([a-f0-9]{10})', reply)[1]
+    draft = latest_draft(store)
     ai.advice = Advice(answer='Add some owned clothes first so I can find a match.', item_ids=[], source_ids=[])
     run(engine.reply('a', f'style photo {draft}'))
     assert ai.context['inspiration_garments']
     assert not store.snapshot('a')['wardrobe']
     assert 'not available' in run(engine.reply('b', f'style photo {draft}'))
+
+
+def test_conversation_infers_types_without_category_commands(tmp_path):
+    store = Store(tmp_path / 'hem.db')
+    engine = Assistant(store, ai=AI(api_key='', model=''))
+    reply = run(engine.reply('a', 'I own a navy sweater and blue jeans'))
+    assert 'saved' in reply and 'top:' not in reply
+    run(engine.reply('a', 'I bought a black jacket'))
+    run(engine.reply('a', 'Add my white dress shirt'))
+    categories = {g['description']: g['category'] for g in store.snapshot('a')['wardrobe']}
+    assert categories == {'navy sweater': 'top', 'blue jeans': 'bottom', 'black jacket': 'outerwear', 'white dress shirt': 'top'}
+    run(engine.reply('a', 'I do not own a red dress'))
+    assert len(store.snapshot('a')['wardrobe']) == 4
+    run(engine.reply('a', 'My blue jeans are in the wash'))
+    assert next(g for g in store.snapshot('a')['wardrobe'] if g['category'] == 'bottom')['available'] == 0
+    display = run(engine.reply('a', 'Show me my clothes'))
+    assert all(g['id'] not in display for g in store.snapshot('a')['wardrobe'])
+
+
+def test_natural_photo_correction_and_confirmation(tmp_path):
+    store = Store(tmp_path / 'hem.db')
+    engine = Assistant(store, ai=FakeAI())
+    run(engine.reply('a', 'My closet', [IMAGE]))
+    reply = run(engine.reply('a', 'Actually the first one is a navy jacket'))
+    assert 'navy jacket' in reply
+    reply = run(engine.reply('a', 'Yes, add those'))
+    assert 'navy jacket' in reply and 'blue trousers' in reply
+    assert [g['category'] for g in store.snapshot('a')['wardrobe']] == ['outerwear', 'bottom']
+    run(engine.reply('a', 'Yes, add those'))
+    assert len(store.snapshot('a')['wardrobe']) == 2
+
+
+def test_unrelated_confirmation_does_not_save_stale_photo(tmp_path):
+    store = Store(tmp_path / 'hem.db')
+    engine = Assistant(store, ai=FakeAI())
+    run(engine.reply('a', '', [IMAGE]))
+    run(engine.reply('a', 'How should I dress for an interview?'))
+    reply = run(engine.reply('a', 'yes'))
+    assert 'What would you like' in reply
+    assert not store.snapshot('a')['wardrobe']
+    assert not store.snapshot('b')['wardrobe']
+
+
+def test_openai_intent_router_receives_context_and_applies_validated_action(tmp_path):
+    from hem.ai import NamedGarment
+    class RouterAI(FakeAI):
+        async def interpret(self, context):
+            self.routed = context
+            return intent('add', garments=[NamedGarment(category='outerwear', description='olive chore jacket')])
+    ai = RouterAI()
+    store = Store(tmp_path / 'hem.db')
+    engine = Assistant(store, ai=ai)
+    run(engine.reply('a', 'Picked up an olive chore jacket yesterday, remember that for my outfits'))
+    assert ai.routed['message'].startswith('Picked up')
+    assert ai.routed['wardrobe'] == []
+    assert store.snapshot('a')['wardrobe'][0]['category'] == 'outerwear'
+
+
+def test_toronto_weather_default_and_opt_out(tmp_path):
+    ai = FakeAI()
+    store = Store(tmp_path / 'hem.db')
+    engine = Assistant(store, ai=ai)
+    reply = run(engine.reply('a', 'What should I wear?'))
+    assert 'Toronto' in reply and ai.context['weather']['rain_chance'] == 80
+    run(engine.reply('a', 'location clear'))
+    run(engine.reply('a', 'What should I wear?'))
+    assert ai.context['weather'] is None

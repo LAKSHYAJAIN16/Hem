@@ -72,7 +72,7 @@ Optional later extension: a Quest wardrobe room for comparing looks. The complet
 
 ## Slide 8 — What we can prove today
 
-Twenty-one automated tests cover photo confirmation, inspiration matching, persistence, user isolation, wear
+Twenty-six automated tests cover conversational input, photo confirmation, inspiration matching, persistence, user isolation, wear
 confirmation, contextual ranking, citations, care requests, queued webhooks, and access controls.
 
 Live weather and public webhook signature checks complement mocked provider tests.

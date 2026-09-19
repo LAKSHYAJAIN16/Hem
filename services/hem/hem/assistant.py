@@ -2,6 +2,7 @@
 import asyncio
 import json
 import re
+import os
 from datetime import date, timedelta
 from xml.etree.ElementTree import ParseError
 
@@ -13,12 +14,14 @@ from hem.media import load_image
 from hem.sources import retrieve, fetch_feed, import_feed
 from hem.stylist import recommend, respond, short_id
 from hem.weather import Weather
+from hem.conversation import context as conversation_context, quick_intent, apply_simple
 
 
 def is_command(text):
     lower = text.lower().strip()
     return (lower in {'help', 'hello', 'hi', 'start', 'wardrobe', 'preferences', 'history', 'wore it', 'i wore it'}
-            or lower.startswith(('add ', 'forget ', 'laundry ', 'clean ', 'wore '))
+            or re.fullmatch(r'add\s+\w+\s*:.+', lower) is not None
+            or lower.startswith(('forget ', 'laundry ', 'clean ', 'wore '))
             or 'what did i wear' in lower
             or re.fullmatch(r'(?:i\s+)?(?:like|love|dislike|hate)\s+.{1,120}', lower) is not None)
 
@@ -30,7 +33,7 @@ class Assistant:
         self.weather = weather if weather is not None else Weather()
         self.locks = [asyncio.Lock() for _ in range(64)]
 
-    def finish(self, db, user, text, reply, request_id):
+    def finish(self, db, user, text, reply, request_id, focus=None):
         db.execute('INSERT INTO conversations(user_id,role,content) VALUES(?,?,?)', (user, 'user', text[:4000]))
         db.execute('INSERT INTO conversations(user_id,role,content) VALUES(?,?,?)', (user, 'assistant', reply))
         # Keep a bounded recent conversation, separate from factual wardrobe/wear memory.
@@ -38,6 +41,9 @@ class Assistant:
                    '(SELECT id FROM conversations WHERE user_id=? ORDER BY id DESC LIMIT 40)', (user, user))
         if request_id:
             db.execute('INSERT INTO receipts(id,user_id,reply) VALUES(?,?,?)', (request_id, user, reply))
+        db.execute('DELETE FROM dialogue_focus WHERE user_id=?', (user,))
+        if focus:
+            db.execute('INSERT INTO dialogue_focus(user_id,kind,target_id) VALUES(?,?,?)', (user, *focus))
         return reply
 
     async def reply(self, user, text, images=(), request_id=None, occasion='', on_date=None, photo_mode='auto'):
@@ -52,7 +58,66 @@ class Assistant:
                 r'\b(match|recreate|inspiration|inspo|someone|their outfit|like this|this look|dress like)\b', text, re.I))
             if images and inspiration_mode:
                 return await self.inspiration_photo(user, text, images, request_id, occasion, on_date)
+            if not images and not self.legacy_syntax(text):
+                with self.store.connect() as db:
+                    ctx = conversation_context(db, user, text)
+                plan = None
+                if self.ai.configured and hasattr(self.ai, 'interpret'):
+                    try:
+                        plan = await self.ai.interpret(ctx)
+                    except AIUnavailable:
+                        pass
+                plan = plan or quick_intent(ctx)
+                if plan and plan.action != 'chat':
+                    return await self.conversational_action(user, text, plan, ctx, request_id, occasion, on_date)
             return await self._reply(user, text.strip(), images, request_id, occasion, on_date)
+
+    @staticmethod
+    def legacy_syntax(text):
+        lower = text.strip().lower()
+        return (lower in {'help', 'hello', 'hi', 'start', 'outfit', 'history', 'preferences', 'wore it', 'i wore it', 'sources', 'photos', 'requests', 'location'}
+                or re.match(r'^(?:add \w+\s*:|(?:confirm|discard|edit|style|match) photo [a-f0-9]{10}|'
+                            r'(?:laundry|clean|wore|care) [a-f0-9]{10}|(?:approve|cancel|complete) request [a-f0-9]{10}|'
+                            r'location |source |auto[- ]|order request:|forget )', lower) is not None)
+
+    async def conversational_action(self, user, text, plan, ctx, request_id, occasion, on_date):
+        if plan.action == 'location':
+            return await self.location(user, 'location ' + plan.value, request_id)
+        if plan.action == 'wear':
+            return await self._reply(user, 'wore it', (), request_id, occasion, on_date)
+        if plan.action in {'confirm_photo', 'edit_photo', 'discard_photo', 'style_photo'}:
+            photo = ctx['pending_photo']
+            if photo and plan.action == 'style_photo':
+                return await self._reply(user, 'style photo ' + photo['id'], (), request_id, occasion, on_date)
+            with self.store.connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                if not photo:
+                    return self.finish(db, user, text, 'Send me the photo you mean, and I’ll take a look.', request_id)
+                if plan.action == 'edit_photo':
+                    if len(plan.garments) != 1 or len(plan.photo_indices) != 1 or not 0 <= plan.photo_indices[0] < len(photo['garments']):
+                        return self.finish(db, user, text, 'Which piece should I correct? Describe its color or where it is in the photo.', request_id, ('photo', photo['id']))
+                    garment = plan.garments[0]
+                    self.photo_command(db, user, f"edit photo {photo['id']} {plan.photo_indices[0] + 1} {garment.category}: {garment.description}")
+                    reply = f"Got it — {garment.description}. Shall I add the clothes from this photo to your wardrobe?"
+                    return self.finish(db, user, text, reply, request_id, ('photo', photo['id']))
+                if plan.action == 'confirm_photo':
+                    indices = plan.photo_indices or list(range(len(photo['garments'])))
+                    if any(i < 0 or i >= len(photo['garments']) for i in indices):
+                        return self.finish(db, user, text, 'Which pieces should I add? Describe them by color or name.', request_id, ('photo', photo['id']))
+                    self.photo_command(db, user, f"confirm photo {photo['id']} " + ','.join(str(i + 1) for i in indices))
+                    reply = 'Added ' + ', '.join(photo['garments'][i]['description'] for i in sorted(set(indices))) + ' to your wardrobe. What are you dressing for?'
+                else:
+                    self.photo_command(db, user, 'discard photo ' + photo['id'])
+                    reply = 'Okay, I won’t add those clothes.'
+                return self.finish(db, user, text, reply, request_id)
+        with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            try:
+                reply = apply_simple(db, user, plan)
+            except ValueError:
+                reply = 'Which piece do you mean? Describe it or send a photo so I can get it right.'
+            focus = ('photo', ctx['pending_photo']['id']) if plan.action == 'clarify' and ctx['pending_photo'] else None
+            return self.finish(db, user, text, reply or 'Tell me a little more about what you’d like to do.', request_id, focus)
 
     async def _reply(self, user, text, images, request_id, occasion, on_date, inspiration=None):
         lower = text.lower()
@@ -71,7 +136,9 @@ class Assistant:
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
                 reply = self.photo_command(db, user, text)
-                return self.finish(db, user, text, reply, request_id)
+                match = re.match(r'edit photo ([a-f0-9]{10})', lower)
+                focus = ('photo', match[1]) if match else None
+                return self.finish(db, user, text, reply, request_id, focus)
         if lower.startswith('location ') or lower == 'location':
             return await self.location(user, text, request_id)
         if lower.startswith('source '):
@@ -105,12 +172,9 @@ class Assistant:
                     db.execute('UPDATE care_rules SET wears_since_clean=0 WHERE garment_id IN '
                                '(SELECT id FROM garments WHERE id=? AND user_id=?)', (clean[1], user))
                 if lower in {'help', 'hello', 'hi', 'start'}:
-                    reply += ('\nSend a garment photo, then confirm the proposed items. '
-                              "Set weather location with 'location Toronto', and ask for an outfit for an occasion. "
-                              "Caption an outfit photo 'match this look' to recreate it with your own clothes. "
-                              "Use 'photos' for pending photos and 'source https://publication.substack.com/feed' for inspiration. "
-                              "Set 'care <item ID>: laundry every 3 wears' to prepare cleaning requests. "
-                              "Use 'auto order: <item and budget>' for a purchase request. Nothing is booked or purchased automatically.")
+                    reply = ("Hey, I’m Hem. Send me a photo of your wardrobe or tell me about a few clothes you own — "
+                             "I’ll figure out the pieces. You can also show me an outfit you like and I’ll help recreate it. "
+                             "I’m using Toronto weather for now. What are you dressing for?")
                 return self.finish(db, user, text, reply, request_id)
         if lower == 'sources':
             with self.store.connect() as db:
@@ -121,10 +185,14 @@ class Assistant:
         snapshot = self.store.snapshot(user)
         with self.store.connect() as db:
             profile = db.execute('SELECT * FROM profiles WHERE user_id=?', (user,)).fetchone()
+            if not profile and not db.execute('SELECT user_id FROM weather_opt_out WHERE user_id=?', (user,)).fetchone():
+                profile = {'latitude': float(os.getenv('HEM_DEFAULT_LATITUDE', '43.65')),
+                           'longitude': float(os.getenv('HEM_DEFAULT_LONGITUDE', '-79.38')),
+                           'label': os.getenv('HEM_DEFAULT_CITY', 'Toronto')}
             history = [dict(r) for r in db.execute('SELECT role,content FROM conversations WHERE user_id=? ORDER BY id DESC LIMIT 12', (user,))][::-1]
             query = ' '.join([text, occasion] + [item['description'] for item in (inspiration or snapshot['wardrobe']) if item.get('available', True)])
             sources = retrieve(db, user, query)
-        weather, weather_note = None, "Set 'location <city>' to include your local forecast."
+        weather, weather_note = None, 'Tell me your city if you’d like weather-aware suggestions.'
         requested_day = on_date.isoformat() if on_date else None
         if not requested_day:
             explicit_date = re.search(r'\b\d{4}-\d{2}-\d{2}\b', text)
@@ -177,7 +245,7 @@ class Assistant:
                 if sources:
                     reply += '\n\nRelated reading (not used to rank this outfit):\n' + '\n'.join(f"{s['title']} — {s['url']}" for s in sources[:3])
             else:
-                reply = 'Conversational styling needs OPENAI_API_KEY and OPENAI_MODEL.' if not self.ai.configured else 'I could not complete the AI request. Please try again.'
+                reply = 'I’m having trouble thinking that through right now. Try again in a moment, or tell me about a piece you own.'
             return self.finish(db, user, text, reply, request_id)
 
     def apply_advice(self, db, user, advice, sources, occasion):
@@ -204,7 +272,7 @@ class Assistant:
             db.execute('INSERT INTO outfits(id,user_id,item_ids,occasion) VALUES(?,?,?,?)',
                        (outfit_id, user, json.dumps(advice.item_ids), occasion))
             reply += '\n\nFrom your wardrobe: ' + ', '.join(i['description'] for i in items)
-            reply += f".\nOutfit {outfit_id}. Say 'wore it' after you wear it."
+            reply += '.\nLet me know if you wear it, and I’ll remember for next time.'
         if advice.source_ids:
             reply += '\n\nSources:\n' + '\n'.join(
                 f"{source_map[i]['title']} — {source_map[i]['url']}" +
@@ -218,7 +286,7 @@ class Assistant:
         draft_id = None
         try:
             if not self.ai.configured:
-                raise AIUnavailable('Photo recognition needs OPENAI_API_KEY and OPENAI_MODEL.')
+                raise AIUnavailable('I can’t analyze photos right now. You can still tell me about your clothes.')
             if len(images) > 2:
                 raise ValueError('Send up to two photos at a time.')
             data = [await load_image(image) for image in images]
@@ -227,13 +295,8 @@ class Assistant:
                 reply = 'I could not identify a garment in these photos. Try a clear, well-lit photo of one item. ' + result.notes
             else:
                 draft_id = short_id()
-                reply = f'Photo {draft_id}:\n' + '\n'.join(
-                    f'{index}. {item.description} ({item.category}; confidence {item.confidence:.0%})'
-                    for index, item in enumerate(result.garments, 1))
-                reply += (f"\n{result.notes}\nNothing added yet. Reply 'confirm photo {draft_id}' to add all, "
-                          f"or 'confirm photo {draft_id} 1,2' for selected items. "
-                          f"Correct an item with 'edit photo {draft_id} 1 top: navy sweater', "
-                          f"or 'discard photo {draft_id}'. If this is an outfit you like, use 'style photo {draft_id}' instead.")
+                reply = 'I can see ' + ', '.join(item.description for item in result.garments) + '. '
+                reply += result.notes + '\nAre these yours? I can add them to your wardrobe, or use the photo as inspiration for a look.'
         except (AIUnavailable, ValueError, httpx.HTTPError) as exc:
             reply = str(exc) if isinstance(exc, (AIUnavailable, ValueError)) else 'Could not retrieve that photo. Try uploading a JPEG, PNG or WebP.'
         with self.store.connect() as db:
@@ -243,7 +306,7 @@ class Assistant:
                            (draft_id, user, json.dumps([g.model_dump() for g in result.garments])))
                 for image in data:
                     db.execute('INSERT INTO photo_assets(id,user_id,draft_id,image) VALUES(?,?,?,?)', (short_id(), user, draft_id, image))
-            return self.finish(db, user, text or '[garment photo]', reply, request_id)
+            return self.finish(db, user, text or '[garment photo]', reply, request_id, ('photo', draft_id) if draft_id else None)
 
     async def inspiration_photo(self, user, text, images, request_id, occasion, on_date):
         try:
@@ -322,6 +385,7 @@ class Assistant:
         if value.lower() == 'clear':
             with self.store.connect() as db:
                 db.execute('DELETE FROM profiles WHERE user_id=?', (user,))
+                db.execute('INSERT OR IGNORE INTO weather_opt_out(user_id) VALUES(?)', (user,))
                 return self.finish(db, user, text, 'Cleared your weather location.', request_id)
         coordinates = re.fullmatch(r'(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)(?:\s+(.{1,100}))?', value)
         try:
@@ -330,13 +394,14 @@ class Assistant:
                 if not -90 <= lat <= 90 or not -180 <= lon <= 180:
                     raise ValueError()
                 profile = {'latitude': lat, 'longitude': lon, 'label': coordinates[3] or f'{lat}, {lon}'}
+            elif value.lower() == 'toronto':
+                profile = {'latitude': 43.65, 'longitude': -79.38, 'label': 'Toronto'}
             elif value:
                 candidates = await self.weather.locate(value[:100])
                 if len(candidates) == 1:
                     profile = candidates[0]
                 elif candidates:
-                    reply = 'Choose a location by copying its command:\n' + '\n'.join(
-                        f"location {c['latitude']},{c['longitude']} {c['label']}" for c in candidates)
+                    reply = 'I found a few places with that name. Which do you mean?\n' + '\n'.join(c['label'] for c in candidates)
                 else:
                     reply = 'No matching city found. Use location <latitude>,<longitude> <city label>.'
             else:
@@ -347,8 +412,9 @@ class Assistant:
             reply = 'Could not resolve that location. Use location <latitude>,<longitude> <city label>.'
         with self.store.connect() as db:
             if profile:
+                db.execute('DELETE FROM weather_opt_out WHERE user_id=?', (user,))
                 db.execute('INSERT INTO profiles(user_id,latitude,longitude,label) VALUES(?,?,?,?) '
                            'ON CONFLICT(user_id) DO UPDATE SET latitude=excluded.latitude,longitude=excluded.longitude,label=excluded.label',
                            (user, profile['latitude'], profile['longitude'], profile['label']))
-                reply = 'Weather location saved: ' + profile['label'] + ". Say 'location clear' to remove it."
+                reply = 'Got it — I’ll use the forecast for ' + profile['label'] + '.'
             return self.finish(db, user, text, reply, request_id)

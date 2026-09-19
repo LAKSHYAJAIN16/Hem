@@ -24,13 +24,15 @@ Copy-Item .env.example .env
 
 ## Try it
 
-- Send a wardrobe photo, then `confirm photo <ID>`.
+- Send a wardrobe photo and say “yes, add those.” Hem identifies the garment types.
+- Say “I own a navy sweater and blue jeans” or “the first one is a jacket.”
 - Send an outfit you like with “match this look” to recreate it from your own clothes.
-- Set `location Toronto` and ask, “What should I wear to the office tomorrow?”
+- Ask, “What should I wear to the office tomorrow?” Toronto is the default weather location.
 - Say `wore it` after wearing an outfit.
 - Add inspiration with `source https://publication.substack.com/feed`.
-- Set `care <item ID>: laundry every 3 wears` for automatic request preparation.
-- Try `auto order: waterproof boots, size 9, budget CAD 150`, then review `requests`.
+- Say “my blue jeans are in the wash” to keep them out of suggestions.
+
+Care rules and approval-request setup are covered in the [setup guide](docs/SETUP_NOTES.md).
 
 For a terminal conversation: `.venv/Scripts/python.exe -m hem.cli`.
 Run the tests with `.venv/Scripts/python.exe -m pytest`.

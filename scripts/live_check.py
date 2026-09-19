@@ -36,7 +36,7 @@ async def main():
                     '<description>Pair a navy sweater with charcoal trousers for office layering.</description>'
                     '</item></channel></rss>', 'https://example.com/feed')
         reply = await assistant.reply('smoke', 'Pick an outfit for the office using the imported office layering source. Cite it if relevant.')
-        assert 'Outfit ' in reply and 'Sources:' in reply, 'Live advice failed ownership/source validation'
+        assert store.snapshot('smoke')['outfits'] and 'Sources:' in reply, 'Live advice failed ownership/source validation'
         assert not store.snapshot('smoke')['wears']
         print('Live outfit advice, wardrobe validation and source citations OK.')
         followup = await assistant.reply('smoke', 'Why does that combination work?')

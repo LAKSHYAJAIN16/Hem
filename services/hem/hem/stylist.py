@@ -29,7 +29,7 @@ def recommend(db, user_id, occasion, today, weather=None, inspiration=None):
     candidates = list(itertools.islice(itertools.product(groups['top'], groups['bottom'], groups['shoes']), 2000))
     candidates += list(itertools.islice(itertools.product(groups['dress'], groups['shoes']), 1000))
     if not candidates:
-        return "I need an available top, bottom and pair of shoes—or a dress and shoes. Add them with 'add top: ...'. Use 'clean <ID>' for items back from laundry."
+        return "I need a few more available pieces to put a complete outfit together. Send me a wardrobe photo or tell me what clothes and shoes you have."
     preferences = list(db.execute('SELECT value,sentiment FROM preferences WHERE user_id=?', (user_id,)))
     recently_worn = {}
     for row in db.execute('SELECT o.item_ids,w.worn_on FROM wears w JOIN outfits o ON o.id=w.outfit_id WHERE w.user_id=?', (user_id,)):
@@ -54,7 +54,7 @@ def recommend(db, user_id, occasion, today, weather=None, inspiration=None):
                (outfit_id, user_id, json.dumps([i['id'] for i in outfit]), occasion))
     repeats = any(i['id'] in recently_worn for i in outfit)
     explanation = "Some pieces repeat because of your available wardrobe." if repeats else "None of these pieces were logged as worn in the last three days."
-    return "Try " + ', '.join(i['description'] for i in outfit) + f".\n{explanation}\nOutfit {outfit_id}. Say 'wore it' after you wear it."
+    return "Try " + ', '.join(i['description'] for i in outfit) + f".\n{explanation}\nLet me know if you wear it, and I’ll remember for next time."
 
 
 def context_score(outfit, occasion, weather):

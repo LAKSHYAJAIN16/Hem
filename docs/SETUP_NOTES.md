@@ -16,6 +16,7 @@ Run commands from the repository root. Install with
 | `HEM_DEV_TOKEN` | Random bearer token for local API clients |
 | `HEM_MEDIA_HOSTS` | Exact trusted photo CDN hosts; default `cdn.linqapp.com` |
 | `HEM_SOURCE_HOSTS` | Additional exact trusted RSS publisher hosts |
+| `HEM_DEFAULT_CITY`, `HEM_DEFAULT_LATITUDE`, `HEM_DEFAULT_LONGITUDE` | Default weather context; Toronto at 43.65, -79.38 |
 | `HEM_DATABASE` | SQLite path; default `data/hem.sqlite3` |
 
 Start the API with one worker:
@@ -37,14 +38,22 @@ Send a wardrobe photo over iMessage, or supply `images` in `/dev/chat` as base64
 JPEG, PNG, or WebP data URLs. Up to two images, each at most 3 MB, are accepted per
 request. Include different sections of a crowded wardrobe across several messages.
 Hem identifies up to twelve visible garments per batch and asks you to review them.
+OpenAI interprets ordinary descriptions and corrections and infers garment categories.
+Users do not need to provide category labels or record IDs.
 
 ```text
-photos
-edit photo <ID> 1 top: charcoal sweater
-confirm photo <ID> 1,2
-confirm photo <ID>
-discard photo <ID>
+I own a navy sweater and blue jeans
+Actually the first one is a charcoal jacket
+Yes, add those
+Only the navy sweater
+No thanks
+Show me my clothes
+My blue jeans are in the wash
 ```
+
+Short confirmations apply to the photo currently under discussion. An unrelated
+conversation clears that focus so a later 'yes' does not save an old draft. Explicit
+ID-based commands remain available for development tools and older clients.
 
 Selection confirms the chosen items and closes that draft. Photo-derived material,
 warmth and formality are tentative attributes, and a text correction clears those
@@ -56,14 +65,15 @@ For someone else's outfit, caption the photo **match this look** or set API
 `photo_mode` to `inspiration`. Hem extracts visible style attributes and selects
 the closest combination from your available wardrobe, explaining substitutions.
 Reference garments are never added to your wardrobe. If a photo was already
-analyzed as a wardrobe draft, `style photo <ID>` reuses it as inspiration without
+analyzed as a wardrobe draft, saying 'those are not mine, use them as inspiration' reuses it without
 confirming ownership. The API also supports `photo_mode=wardrobe` to explicitly
 import a photo of your own clothes.
 
 ## Styling and weather
 
-Set `location <city>` and choose from geocoding matches, or provide explicit
-coordinates with `location 43.65,-79.38 Toronto`. Remove it with `location clear`.
+Toronto is used by default. Say 'I live in <city>' to change the weather location.
+Development clients can also provide explicit coordinates with
+`location 43.65,-79.38 Toronto`. Remove weather context with `location clear`.
 Open-Meteo supplies dated Celsius forecasts. Use today, tomorrow, an ISO date in
 your message, or the API's `on_date` field. The API also accepts an explicit
 `occasion`. Advice includes the forecast date and source when weather is used.

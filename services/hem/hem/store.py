@@ -74,6 +74,10 @@ CREATE TABLE IF NOT EXISTS action_requests (
   item_ids TEXT NOT NULL, brief TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'draft',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS dialogue_focus (
+  user_id TEXT PRIMARY KEY REFERENCES users(id), kind TEXT NOT NULL, target_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS weather_opt_out (user_id TEXT PRIMARY KEY REFERENCES users(id));
 """
 
 
