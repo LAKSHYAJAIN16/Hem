@@ -22,7 +22,7 @@ def short_id():
     return uuid.uuid4().hex[:10]
 
 
-def recommend(db, user_id, occasion, today):
+def recommend(db, user_id, occasion, today, weather=None):
     items = [dict(r) for r in db.execute('SELECT * FROM garments WHERE user_id=? AND available=1 ORDER BY rowid', (user_id,))]
     groups = {category: [i for i in items if i['category'] == category] for category in CATEGORIES}
     # Bound combination work; this starter is meant for small personal wardrobes.
@@ -40,14 +40,39 @@ def recommend(db, user_id, occasion, today):
     def score(outfit):
         text = ' '.join(i['description'].lower() for i in outfit)
         taste = sum((3 if p['sentiment'] == 'like' else -8) for p in preferences if p['value'] in text)
-        return taste - sum(recently_worn.get(i['id'], 0) * 5 for i in outfit)
+        return taste + context_score(outfit, occasion, weather) - sum(recently_worn.get(i['id'], 0) * 5 for i in outfit)
     outfit = max(candidates, key=score)
+    if weather and weather['feels_like_low_c'] < 15 and groups['outerwear']:
+        outfit = (*outfit, max(groups['outerwear'], key=lambda item: context_score([item], occasion, weather)))
     outfit_id = short_id()
     db.execute('INSERT INTO outfits(id,user_id,item_ids,occasion) VALUES(?,?,?,?)',
                (outfit_id, user_id, json.dumps([i['id'] for i in outfit]), occasion))
     repeats = any(i['id'] in recently_worn for i in outfit)
     explanation = "Some pieces repeat because of your available wardrobe." if repeats else "None of these pieces were logged as worn in the last three days."
-    return "Try " + ', '.join(i['description'] for i in outfit) + f".\n{explanation}\nOutfit {outfit_id}. Say 'wore it' after you wear it.\nThis first version ranks your descriptions and preferences; occasion-specific AI styling isn't connected yet."
+    return "Try " + ', '.join(i['description'] for i in outfit) + f".\n{explanation}\nOutfit {outfit_id}. Say 'wore it' after you wear it."
+
+
+def context_score(outfit, occasion, weather):
+    description = ' '.join(i['description'].lower() for i in outfit)
+    formal = any(word in occasion.lower() for word in ('wedding', 'formal', 'interview', 'office', 'business'))
+    athletic = any(word in occasion.lower() for word in ('gym', 'workout', 'running', 'hike'))
+    score = 0
+    if formal:
+        score += 5 * sum(word in description for word in ('blazer', 'trousers', 'oxford', 'loafers', 'dress shirt', 'suit'))
+        score -= 6 * sum(word in description for word in ('hoodie', 'shorts', 'sweatpants', 'flip flop'))
+    if athletic:
+        score += 5 * sum(word in description for word in ('running', 'athletic', 'sneakers', 'leggings', 'shorts'))
+    if weather:
+        if weather['feels_like_low_c'] < 12:
+            score += 4 * sum(word in description for word in ('sweater', 'wool', 'coat', 'boots', 'jacket'))
+            score -= 6 * sum(word in description for word in ('shorts', 'sandals', 'tank'))
+        if weather['high_c'] > 25:
+            score += 4 * sum(word in description for word in ('linen', 'lightweight', 'shorts', 'tee'))
+            score -= 6 * sum(word in description for word in ('wool', 'heavy', 'fleece'))
+        if weather['rain_chance'] >= 50:
+            score += 5 * sum(word in description for word in ('waterproof', 'raincoat', 'boots'))
+            score -= 5 * sum(word in description for word in ('suede', 'sandals'))
+    return score
 
 
 def respond(db, user_id, text, today=None):

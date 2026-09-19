@@ -13,6 +13,10 @@ Accessed September 19, 2026:
 - [Linq webhook events](https://docs.linqapp.com/channel/imessage/guides/webhooks/events/) — inbound event envelope and message fields.
 - [Qdrant query API](https://api.qdrant.tech/api-reference/search/query-points) — vector query requests and payload filters.
 - [Qdrant upsert API](https://api.qdrant.tech/api-reference/points/upsert-points) — document/vector indexing requests.
+- [OpenAI image inputs](https://developers.openai.com/api/docs/guides/images-vision) — wardrobe photo interpretation.
+- [OpenAI structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs) — validated garment and advice schemas.
+- [Open-Meteo forecast API](https://open-meteo.com/en/docs) — dated weather context and attribution.
+- [Unity XR Interaction Toolkit](https://docs.unity3d.com/Packages/com.unity.xr.interaction.toolkit@3.0/manual/index.html) — proposed VR client interaction design.
 
 These sources informed integration code; they do not imply sponsorship, endorsement, or a verified live connection.
 
@@ -43,4 +47,10 @@ When adding a source, record its publisher, original URL, access date, license o
 
 ## Service status
 
-Linq and Qdrant adapters are implemented; no live credentials or live integration test results are claimed. An AI/embedding provider has not been selected or connected. Add its model identifiers and relevant data-processing details here when configured. VR is a proposed extension and is not implemented.
+The service integrates Linq messaging, OpenAI Responses for structured photo recognition
+and advice, Open-Meteo forecasts, and per-user RSS/Atom retrieval with source citations.
+The environment template selects `gpt-4.1-mini`; deployments can configure a compatible
+model. OpenAI requests use `store=false` and include only the relevant wardrobe,
+conversation, photo and source context. API credentials and account diagnostics remain
+in local configuration. Qdrant remains an optional adapter. The VR client design is
+documented in `docs/VR.md`.

@@ -36,8 +36,11 @@ def inbound(payload):
         raise ValueError('Missing sender, chat or message ID. Expected the 2026-02-03 webhook format.')
     text = '\n'.join(p.get('value', '') for p in data.get('parts', []) if p.get('type') == 'text')
     has_media = any(p.get('type') == 'media' for p in data.get('parts', []))
+    images = [p['url'] for p in data.get('parts', []) if p.get('type') == 'media'
+              and isinstance(p.get('url'), str) and p.get('mime_type', 'image/').startswith('image/')]
     return {'user_id': hashlib.sha256(handle.strip().lower().encode()).hexdigest(),
-            'chat_id': chat['id'], 'message_id': data['id'], 'text': text[:4000], 'has_media': has_media}
+            'chat_id': chat['id'], 'message_id': data['id'], 'text': text[:4000], 'has_media': has_media,
+            'images': images}
 
 
 async def send_reply(api_key, chat_id, reply):

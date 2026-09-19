@@ -1,74 +1,118 @@
-# Hem
+# Build and setup
 
-Your wardrobe. Your taste. Your next outfit.
+Run commands from the repository root. Install with
+`.venv/Scripts/python.exe -m pip install -e ".[test]"` and copy `.env.example` to
+`.env` once. Keep personal configuration and runtime data in ignored local files.
 
-Hem is an iMessage-first personal stylist: text what you own, get an outfit, and let your confirmed wear history and preferences inform the next suggestion.
+## Configuration
 
-## Working starter
+| Setting | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` | OpenAI API project credential |
+| `OPENAI_MODEL` | Image-capable Responses API model supporting structured outputs; default template uses `gpt-4.1-mini` |
+| `LINQ_API_KEY` | Linq account API credential |
+| `LINQ_WEBHOOK_SECRET` | Signing secret returned when registering the webhook |
+| `HEM_SEND_MESSAGES` | Set to `true` to send replies to incoming iMessages |
+| `HEM_DEV_TOKEN` | Random bearer token for local API clients |
+| `HEM_MEDIA_HOSTS` | Exact trusted photo CDN hosts; default `cdn.linqapp.com` |
+| `HEM_SOURCE_HOSTS` | Additional exact trusted RSS publisher hosts |
+| `HEM_DATABASE` | SQLite path; default `data/hem.sqlite3` |
 
-- Persistent, per-user wardrobe and preference memory in SQLite.
-- Outfit combinations from available clothes, with penalties for recently worn pieces.
-- Explicit wear confirmation, history, and laundry availability.
-- Local text simulator and FastAPI API.
-- Linq V3 webhook signature verification, event/message deduplication, and a durable reply outbox.
-
-This is a deterministic prototype, not a connected AI stylist. Photos, free-form advice, weather, live fashion databases, and VR are not implemented yet. Qdrant indexing/query and RSS/Atom parsing adapters exist and have mocked tests; they are not yet connected to the chat flow or a live embedding provider. No demo wardrobe is silently populated. Preferences currently match words in garment descriptions; occasion requests are stored but do not affect ranking. Wear dates use the server's local date.
-
-## Run locally (PowerShell)
+Start the API with one worker:
 
 ```powershell
-cd C:\Users\laksh\Desktop\Projects\Hem
-python -m hem.cli
+.venv/Scripts/python.exe -m uvicorn hem.app:create_app --factory --host 127.0.0.1 --port 8010 --workers 1
 ```
 
-The CLI needs only Python 3.11+ and sends no messages. Try:
+Restart after changing environment configuration. The API is at
+http://127.0.0.1:8010/docs. Use [the tunnel guide](../infra/README.md) to connect
+Linq. Signed incoming events enter a durable queue; conversation receipts make
+replay after a process restart idempotent. Delivery state is separate from wardrobe
+and wear history. Development users use the `dev:` namespace; iMessage users are
+scoped to a hash of their sender handle.
+
+## Wardrobe photos
+
+Send a wardrobe photo over iMessage, or supply `images` in `/dev/chat` as base64
+JPEG, PNG, or WebP data URLs. Up to two images, each at most 3 MB, are accepted per
+request. Include different sections of a crowded wardrobe across several messages.
+Hem identifies up to twelve visible garments per batch and asks you to review them.
 
 ```text
-add top: navy cotton sweater
-add top: cream linen shirt
-add bottom: blue jeans
-add shoes: white sneakers
-I like navy
-What should I wear today?
-wore it
-What should I wear today?
-history
+photos
+edit photo <ID> 1 top: charcoal sweater
+confirm photo <ID> 1,2
+confirm photo <ID>
+discard photo <ID>
 ```
 
-For the HTTP server:
+Selection confirms the chosen items and closes that draft. Photo-derived material,
+warmth and formality are tentative attributes, and a text correction clears those
+inferences. The original photo is stored locally for review; single-photo drafts
+can link it to confirmed garments. This is a reference image, not a garment crop
+or a 3D model. API photo access requires the development bearer token.
+
+## Styling and weather
+
+Set `location <city>` and choose from geocoding matches, or provide explicit
+coordinates with `location 43.65,-79.38 Toronto`. Remove it with `location clear`.
+Open-Meteo supplies dated Celsius forecasts. Use today, tomorrow, an ISO date in
+your message, or the API's `on_date` field. The API also accepts an explicit
+`occasion`. Advice includes the forecast date and source when weather is used.
+
+The AI receives your available wardrobe, saved attributes and preferences, recent
+conversation, confirmed wears, and relevant source excerpts. Selected garment IDs
+are checked against your current available wardrobe before an outfit is saved.
+Use `wore it` to record a wear; asking for advice never logs one.
+
+## Fashion sources
+
+Import a public Substack feed with `source https://publication.substack.com/feed`.
+Additional publishers can be configured through `HEM_SOURCE_HOSTS`. Redirects
+are rejected; use the final feed URL. To import an authorized local RSS/Atom export:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -e ".[test]"
-Copy-Item .env.example .env
-.venv\Scripts\python.exe -m uvicorn hem.app:create_app --factory --host 127.0.0.1 --port 8010 --workers 1
+.venv/Scripts/python.exe scripts/import_inspiration.py data/inspiration.xml --source-url https://publisher.example/feed --user local-demo
 ```
 
-API docs: http://127.0.0.1:8010/docs. Set a random `HEM_DEV_TOKEN` in `.env` to use `/dev/chat` with a matching Bearer token. Local CLI users are isolated by `--user`; this is a development simulator, not user authentication.
+Use `--sender <incoming E.164 handle>` instead of `--user` for an iMessage wardrobe.
+The authenticated `/dev/sources/import` endpoint accepts `user_id`, `source_url`,
+and `xml`. Imports preserve links and publication dates, and repeated imports
+update the same entries. Per-user lexical retrieval selects relevant excerpts;
+validated source IDs become citations in the reply. General advice is labeled
+separately when no imported source is cited. Import only public or authorized
+content. Publisher text is treated as data, never as executable instructions.
 
-Tests: `.venv\Scripts\python.exe -m pytest`.
+## Care and shopping requests
 
-## Linq integration
+```text
+care <item ID>: laundry every 3 wears
+care <item ID>: dryclean every 5 wears
+auto laundry
+auto drycleaner
+auto order: waterproof boots, size 9, budget CAD 150
+requests
+approve request <ID>
+cancel request <ID>
+complete request <ID>
+```
 
-Configure a Linq account/number and a public HTTPS deployment. Subscribe `/webhooks/linq` to `message.received` using webhook version `2026-02-03`, and set `LINQ_WEBHOOK_SECRET`. See the official [webhook guide](https://docs.linqapp.com/channel/imessage/guides/webhooks/) and [event schemas](https://docs.linqapp.com/channel/imessage/guides/webhooks/events/).
+Care rules come from the user and the garment care label. Confirmed wears increment
+their counters and prepare due requests. Approval marks a request ready to arrange;
+it does not book, send a provider message, charge a payment method, or purchase.
+Confirm the provider, quote, address, and time before arranging a service. Mark a
+cleaning request complete after the real-world work is done to reset its counters
+and return garments to availability. Order requests capture the brief and the
+product, price, size, shipping and payment details that need confirmation.
 
-Sending defaults to disabled. Signed incoming messages can update memory and save replies as `dry_run`; these are never sent later. To enable real replies after account setup, set `LINQ_API_KEY` and `HEM_SEND_MESSAGES=true`. No live connection has been tested. Run one server worker with this initial SQLite outbox implementation. Ambiguous send failures become `needs_review` rather than retrying and potentially duplicating a message. Review those records manually; no delivery-management UI exists yet.
+## Validation
 
-Only direct inbound messages are handled. The sender handle maps to a hashed account ID; hashes are not anonymization. Database records contain private clothing/preferences/messages and require ordinary storage protection. Before public launch add account deletion/export, rate limits, operational monitoring, and a retention policy.
+`.venv/Scripts/python.exe -m pytest` runs isolated tests with mocked providers.
+`.venv/Scripts/python.exe scripts/live_check.py --photo data/wardrobe.jpg` runs
+opt-in live weather and paid AI checks against temporary records, with no messaging.
+`.venv/Scripts/python.exe scripts/check_tunnel.py` checks public health and signed
+webhook acceptance using an ignored event.
 
-## Next build milestones
-
-1. Connect Linq and verify one complete incoming-message/reply cycle.
-2. Add image understanding with user confirmation before saving extracted clothing attributes.
-3. Connect a conversational model to typed wardrobe tools, preserving explicit wear confirmation.
-4. Add Qdrant for garment/style embeddings and permission-scoped retrieval. Keep exact wear dates and inventory in SQLite; use vectors for similarity, not factual history.
-5. Ingest selected fashion catalogs and public/authorized newsletter feeds with source URLs and dates. Ground advice in retrieved material and clothes the user owns.
-6. Optionally show suggested outfits in a Quest wardrobe room. Messaging remains the complete core experience.
-
-## Retrieval adapters
-
-`hem.retrieval.VectorIndex` supports creating a cosine collection, indexing documents, and queries scoped to one owner. Supply vectors from the same embedding model with the configured dimensions. IDs include the owner scope. These are internal service methods, not public endpoints: the caller must supply the authenticated owner, never a client-selected identity. See [Qdrant query API](https://api.qdrant.tech/api-reference/search/query-points).
-
-`hem.sources.parse_feed(xml, source_url)` extracts RSS/Atom titles, summaries, dates, and source links from supplied feed contents, including newsletter feeds. It performs no network fetches and does not bypass paid subscriptions. Render extracted text as text, not HTML. Source content is untrusted reference material, never assistant instructions.
-
-No vector service, embedding model, or newsletter subscription is installed. The next integration step is a configured embedding provider plus a source ingestion job, followed by wiring retrieved evidence into conversational advice.
+Local `/dev/*` endpoints use an operator token and caller-selected development
+identities. A deployed multi-user client needs account authentication and a
+server-derived owner identity before accessing private wardrobes.

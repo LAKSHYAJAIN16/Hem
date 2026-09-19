@@ -45,14 +45,32 @@ under `docs`, tunnel instructions under `infra`, and integration commands under
 package discovery and root environment-file resolution. Retained root README,
 deck, sources, and this development log. The requested remote is configured as origin.
 
-Started a Cloudflare quick tunnel and registered a Linq subscription using the line
-returned by the authenticated account. The initially supplied number was rejected
-by Linq with 403; no subscription was created for that number. API and signing
-secrets, registration response, downloaded client, and logs remain in ignored local
-files. Real outbound replies remain disabled.
+Started a Cloudflare quick tunnel and registered a Linq subscription. API and signing
+secrets, registration response, downloaded client, and operational logs remain in
+ignored local files.
 
 Validation: all 8 service tests passed after relocating the package. Public health
 check passed; a signed synthetic message.sent event was safely ignored and an
 unsigned request returned 401. No actual incoming-message/reply cycle has been
 tested and no outbound message was sent. The quick tunnel URL changes when the
 tunnel is recreated and requires updating the Linq subscription.
+
+## 2026-09-19 — Photo wardrobe, contextual styling and approval requests
+
+Added structured wardrobe-photo recognition with correction and confirmation,
+conversational styling constrained to available owned garments, dated weather,
+occasion-aware fallback ranking, and per-user RSS/Atom inspiration retrieval.
+Added automatic preparation of care requests from user-defined wear intervals,
+shopping request drafts, and explicit approval/cancellation/completion commands.
+External provider bookings and purchases are separate from request approval.
+
+Incoming iMessages now enter a durable queue, with receipts to prevent repeated
+mutations after restart. Added authenticated local wardrobe/photo endpoints,
+source-import and live-check scripts, and a Unity/OpenXR companion design.
+Public READMEs focus on usage and supported features; credentials and private
+account diagnostics stay out of the repository.
+
+Validation: 19 tests passed, covering multi-item photo confirmation, owner isolation,
+model-output validation, weather ranking, citations, care counters, request approval,
+webhook queue acknowledgement, replay receipts, and HTTP access controls. Live weather
+and public webhook health/signature checks passed. The operator enabled reply delivery.

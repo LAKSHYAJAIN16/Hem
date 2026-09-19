@@ -73,7 +73,7 @@ def test_webhook_idempotency_and_dry_run(tmp_path, monkeypatch):
         'parts': [{'type': 'text', 'value': 'add top: navy sweater'}]}}
     with TestClient(app) as client:
         body, headers = signed(payload)
-        assert client.post('/webhooks/linq', content=body, headers=headers).json()['status'] == 'dry_run'
+        assert client.post('/webhooks/linq', content=body, headers=headers).json()['status'] == 'queued'
         assert client.post('/webhooks/linq', content=body, headers=headers).json()['status'] == 'duplicate'
         payload['event_id'] = 'e2'
         body, headers = signed(payload)
@@ -82,6 +82,12 @@ def test_webhook_idempotency_and_dry_run(tmp_path, monkeypatch):
         payload['data']['chat']['is_group'] = True
         body, headers = signed(payload)
         assert client.post('/webhooks/linq', content=body, headers=headers).json()['status'] == 'ignored'
+        for _ in range(100):
+            with app.state.store.connect() as db:
+                processed = db.execute('SELECT count(*) FROM events').fetchone()[0]
+            if processed:
+                break
+            time.sleep(0.02)
     with app.state.store.connect() as db:
         assert db.execute('SELECT count(*) FROM garments').fetchone()[0] == 1
         assert db.execute('SELECT status FROM events').fetchone()[0] == 'dry_run'

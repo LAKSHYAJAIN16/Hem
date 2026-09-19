@@ -19,12 +19,13 @@ Hem's starting point: help someone use the clothes they own.
 
 Target experience:
 
-1. Send a garment photo or description.
+1. Send a photo of your wardrobe and confirm the identified clothes.
 2. Ask for an outfit for your day.
 3. Explain a preference: “I like navy; skip orange.”
 4. Confirm “wore it” so the next recommendation accounts for it.
 
-Today: descriptions, preferences, suggestions, and wear confirmation work in the local simulator. Photo recognition and open-ended styling are planned. Live iMessage needs Linq credentials and deployment.
+Hem connects wardrobe photo review, conversation, preferences, contextual suggestions,
+and wear confirmation through a shared messaging and HTTP service.
 
 ---
 
@@ -40,25 +41,30 @@ This gives the demo a visible cause and effect: wear the first suggestion, reque
 
 Add a navy sweater, cream shirt, jeans, and sneakers. Say “I like navy,” ask for an outfit, then say “wore it.” Ask again and show the changed top. Show history and the saved preference.
 
-Use the local CLI until live Linq is verified. Label any proposed photo or newsletter sequence as a storyboard, not a live demo.
+Use the configured messaging service or local CLI. Review the proposed garments before
+confirming a photo import, and show the source links attached to an inspired outfit.
 
 ---
 
 ## Slide 6 — Built around the conversation
 
 - Linq: signed incoming messages and an outgoing reply adapter.
-- Python/FastAPI: conversation commands and outfit ranking.
-- SQLite: inventory, preferences, confirmed wear history, and reply outbox.
+- Python/FastAPI: conversation orchestration and outfit validation.
+- OpenAI Responses: structured wardrobe-photo analysis and conversational styling.
+- Open-Meteo: dated weather context for the user's chosen location.
+- SQLite: inventory, preferences, confirmed wear history, queued messages, and approval requests.
 - Qdrant adapter: owner-scoped vector indexing and queries, awaiting embeddings/service connection.
-- RSS/Atom parser: source-attributed inspiration, awaiting ingestion and retrieval integration.
+- RSS/Atom: imported inspiration with per-user retrieval and source citations.
 
-Current ranking is deterministic. AI-generated advice is a next integration, not a current claim.
+Suggested outfit IDs are checked against the user's available wardrobe before saving.
+Rule-based ranking provides a fallback that accounts for occasion and weather.
 
 ---
 
 ## Slide 7 — Inspiration that knows your closet
 
-Next: retrieve relevant garment/style references, cite their sources, and translate inspiration into combinations of owned clothes. Keep factual inventory and dates separate from semantic similarity.
+Retrieve relevant style references, cite their sources, and translate inspiration into
+combinations of owned clothes. Keep factual inventory and dates separate from inspiration.
 
 Optional later extension: a Quest wardrobe room for comparing looks. The complete everyday flow should stay in messaging.
 
@@ -66,9 +72,11 @@ Optional later extension: a Quest wardrobe room for comparing looks. The complet
 
 ## Slide 8 — What we can prove today
 
-Eight automated tests pass for persistence, user isolation, wear confirmation, rotation, laundry, webhook signatures/deduplication, access controls, vector query scoping, and feed parsing.
+Nineteen automated tests cover photo confirmation, persistence, user isolation, wear
+confirmation, contextual ranking, citations, care requests, queued webhooks, and access controls.
 
-No live Linq, Qdrant, embedding, vision, or headset test has been completed. No user-growth, accuracy, or sustainability metrics are claimed.
+Live weather and public webhook signature checks complement mocked provider tests.
+Use the opt-in live-check script to validate the configured AI provider before a demo.
 
 ---
 

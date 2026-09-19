@@ -22,5 +22,5 @@ Register the tunnel using an API-owned Linq line (not the recipient's personal n
 The script saves the one-time signing secret to `.env` and backs up the response
 in `data/linq-subscription.json`. It refuses duplicate registration if that file
 exists. Restart the API after registration. If the tunnel URL changes, update the
-existing subscription in Linq before testing delivery. Real replies remain disabled
-until `HEM_SEND_MESSAGES=true` is explicitly configured.
+existing subscription in Linq before testing delivery. Set `HEM_SEND_MESSAGES=true`
+and restart the server to enable replies to incoming texts.
