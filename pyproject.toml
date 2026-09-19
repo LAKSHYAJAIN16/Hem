@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hem-stylist"
+version = "0.1.0"
+description = "A personal stylist in your messages, with a wardrobe and memory."
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "httpx>=0.27,<1", "python-dotenv>=1,<2"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+
+[project.scripts]
+hem = "hem.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["services/hem"]
+include = ["hem*"]
+
+[tool.pytest.ini_options]
+testpaths = ["services/hem/tests"]
