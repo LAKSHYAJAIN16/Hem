@@ -40,7 +40,7 @@ class Assistant:
             db.execute('INSERT INTO receipts(id,user_id,reply) VALUES(?,?,?)', (request_id, user, reply))
         return reply
 
-    async def reply(self, user, text, images=(), request_id=None, occasion='', on_date=None):
+    async def reply(self, user, text, images=(), request_id=None, occasion='', on_date=None, photo_mode='auto'):
         async with self.locks[hash(user) % len(self.locks)]:
             with self.store.connect() as db:
                 if request_id:
@@ -48,12 +48,25 @@ class Assistant:
                     if receipt:
                         return receipt['reply']
                 db.execute('INSERT OR IGNORE INTO users(id) VALUES(?)', (user,))
+            inspiration_mode = photo_mode == 'inspiration' or (photo_mode == 'auto' and re.search(
+                r'\b(match|recreate|inspiration|inspo|someone|their outfit|like this|this look|dress like)\b', text, re.I))
+            if images and inspiration_mode:
+                return await self.inspiration_photo(user, text, images, request_id, occasion, on_date)
             return await self._reply(user, text.strip(), images, request_id, occasion, on_date)
 
-    async def _reply(self, user, text, images, request_id, occasion, on_date):
+    async def _reply(self, user, text, images, request_id, occasion, on_date, inspiration=None):
         lower = text.lower()
         if images:
             return await self.photo(user, text, images, request_id)
+        match_photo = re.fullmatch(r'(?:style|match) photo ([a-f0-9]{10})', lower)
+        if match_photo:
+            with self.store.connect() as db:
+                draft = db.execute('SELECT garments FROM photo_drafts WHERE id=? AND user_id=? AND status!=?',
+                                   (match_photo[1], user, 'discarded')).fetchone()
+                if not draft:
+                    return self.finish(db, user, text, 'That photo is not available in your drafts.', request_id)
+            return await self._reply(user, 'Recreate the look in my reference photo using my own wardrobe.',
+                                     (), request_id, occasion, on_date, json.loads(draft['garments']))
         if lower.startswith(('confirm photo ', 'discard photo ', 'edit photo ')) or lower == 'photos':
             with self.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
@@ -94,6 +107,7 @@ class Assistant:
                 if lower in {'help', 'hello', 'hi', 'start'}:
                     reply += ('\nSend a garment photo, then confirm the proposed items. '
                               "Set weather location with 'location Toronto', and ask for an outfit for an occasion. "
+                              "Caption an outfit photo 'match this look' to recreate it with your own clothes. "
                               "Use 'photos' for pending photos and 'source https://publication.substack.com/feed' for inspiration. "
                               "Set 'care <item ID>: laundry every 3 wears' to prepare cleaning requests. "
                               "Use 'auto order: <item and budget>' for a purchase request. Nothing is booked or purchased automatically.")
@@ -108,7 +122,7 @@ class Assistant:
         with self.store.connect() as db:
             profile = db.execute('SELECT * FROM profiles WHERE user_id=?', (user,)).fetchone()
             history = [dict(r) for r in db.execute('SELECT role,content FROM conversations WHERE user_id=? ORDER BY id DESC LIMIT 12', (user,))][::-1]
-            query = ' '.join([text, occasion] + [item['description'] for item in snapshot['wardrobe'] if item['available']])
+            query = ' '.join([text, occasion] + [item['description'] for item in (inspiration or snapshot['wardrobe']) if item.get('available', True)])
             sources = retrieve(db, user, query)
         weather, weather_note = None, "Set 'location <city>' to include your local forecast."
         requested_day = on_date.isoformat() if on_date else None
@@ -134,7 +148,7 @@ class Assistant:
                    'available_wardrobe': [i for i in snapshot['wardrobe'] if i['available']],
                    'garment_attributes': snapshot['details'], 'preferences': snapshot['preferences'],
                    'confirmed_wears': snapshot['wears'][:20], 'recent_outfits': snapshot['outfits'],
-                   'conversation': history, 'weather': weather,
+                   'conversation': history, 'weather': weather, 'inspiration_garments': inspiration or [],
                    'sources': [{k: s[k] for k in ('id', 'title', 'summary', 'published_at')} for s in sources]}
         ai_error = None
         if self.ai.configured:
@@ -143,6 +157,8 @@ class Assistant:
                 with self.store.connect() as db:
                     db.execute('BEGIN IMMEDIATE')
                     reply = self.apply_advice(db, user, advice, sources, occasion or text)
+                    if inspiration:
+                        reply = 'Recreating the reference look with your wardrobe:\n' + reply
                     if weather:
                         reply += '\n\n' + weather_note
                     elif 'weather' in lower or 'wear' in lower or lower == 'outfit':
@@ -152,9 +168,9 @@ class Assistant:
                 ai_error = 'AI styling is temporarily unavailable; here is a rule-based suggestion.'
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            wants_outfit = bool(occasion or any(word in lower for word in ('wear', 'outfit', 'style', 'wedding', 'office', 'gym', 'interview')))
+            wants_outfit = bool(inspiration or occasion or any(word in lower for word in ('wear', 'outfit', 'style', 'wedding', 'office', 'gym', 'interview')))
             if wants_outfit:
-                reply = recommend(db, user, occasion or text, date.today(), weather)
+                reply = recommend(db, user, occasion or text, date.today(), weather, inspiration)
                 reply += '\n\n' + weather_note
                 if ai_error:
                     reply = ai_error + '\n' + reply
@@ -217,7 +233,7 @@ class Assistant:
                 reply += (f"\n{result.notes}\nNothing added yet. Reply 'confirm photo {draft_id}' to add all, "
                           f"or 'confirm photo {draft_id} 1,2' for selected items. "
                           f"Correct an item with 'edit photo {draft_id} 1 top: navy sweater', "
-                          f"or 'discard photo {draft_id}'.")
+                          f"or 'discard photo {draft_id}'. If this is an outfit you like, use 'style photo {draft_id}' instead.")
         except (AIUnavailable, ValueError, httpx.HTTPError) as exc:
             reply = str(exc) if isinstance(exc, (AIUnavailable, ValueError)) else 'Could not retrieve that photo. Try uploading a JPEG, PNG or WebP.'
         with self.store.connect() as db:
@@ -228,6 +244,25 @@ class Assistant:
                 for image in data:
                     db.execute('INSERT INTO photo_assets(id,user_id,draft_id,image) VALUES(?,?,?,?)', (short_id(), user, draft_id, image))
             return self.finish(db, user, text or '[garment photo]', reply, request_id)
+
+    async def inspiration_photo(self, user, text, images, request_id, occasion, on_date):
+        try:
+            if not self.ai.configured:
+                raise AIUnavailable('Photo styling needs the AI integration configured.')
+            if len(images) > 2:
+                raise ValueError('Send up to two inspiration photos at a time.')
+            data = [await load_image(image) for image in images]
+            result = await self.ai.describe(data, text)
+            if not result.garments:
+                raise ValueError('I could not see enough of the outfit. Try a clearer photo of the clothes you want to match.')
+        except (AIUnavailable, ValueError, httpx.HTTPError) as exc:
+            reply = str(exc) if isinstance(exc, (AIUnavailable, ValueError)) else 'Could not retrieve the inspiration photo.'
+            with self.store.connect() as db:
+                return self.finish(db, user, text or '[inspiration photo]', reply, request_id)
+        inspiration = [g.model_dump() for g in result.garments]
+        prompt = (text or 'Recreate this look with my clothes.') + '\nReference clothes: ' + ', '.join(g.description for g in result.garments)
+        # Reference photos never create owned garments or photo-import drafts.
+        return await self._reply(user, prompt, (), request_id, occasion, on_date, inspiration)
 
     def photo_command(self, db, user, text):
         if text.lower() == 'photos':

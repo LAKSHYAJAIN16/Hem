@@ -25,6 +25,7 @@ Copy-Item .env.example .env
 ## Try it
 
 - Send a wardrobe photo, then `confirm photo <ID>`.
+- Send an outfit you like with “match this look” to recreate it from your own clothes.
 - Set `location Toronto` and ask, “What should I wear to the office tomorrow?”
 - Say `wore it` after wearing an outfit.
 - Add inspiration with `source https://publication.substack.com/feed`.

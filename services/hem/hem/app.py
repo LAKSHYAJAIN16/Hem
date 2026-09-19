@@ -7,6 +7,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
+from typing import Literal
 from xml.etree.ElementTree import ParseError
 
 from dotenv import load_dotenv
@@ -151,13 +152,14 @@ def create_app(database=None, assistant=None):
         images: list[str] = Field(default_factory=list, max_length=2)
         occasion: str = Field(default='', max_length=200)
         on_date: date | None = None
+        photo_mode: Literal['auto', 'wardrobe', 'inspiration'] = 'auto'
 
     @app.post('/dev/chat', dependencies=[Depends(authorize)])
     async def simulate(body: DevMessage):
         if not body.text.strip() and not body.images:
             raise HTTPException(422, 'Provide a message or photo.')
         return {'reply': await engine.reply('dev:' + body.user_id, body.text, body.images,
-                                           occasion=body.occasion, on_date=body.on_date)}
+                                           occasion=body.occasion, on_date=body.on_date, photo_mode=body.photo_mode)}
 
     class FeedImport(BaseModel):
         user_id: str = Field(min_length=1, max_length=100)

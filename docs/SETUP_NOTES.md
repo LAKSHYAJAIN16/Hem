@@ -52,6 +52,14 @@ inferences. The original photo is stored locally for review; single-photo drafts
 can link it to confirmed garments. This is a reference image, not a garment crop
 or a 3D model. API photo access requires the development bearer token.
 
+For someone else's outfit, caption the photo **match this look** or set API
+`photo_mode` to `inspiration`. Hem extracts visible style attributes and selects
+the closest combination from your available wardrobe, explaining substitutions.
+Reference garments are never added to your wardrobe. If a photo was already
+analyzed as a wardrobe draft, `style photo <ID>` reuses it as inspiration without
+confirming ownership. The API also supports `photo_mode=wardrobe` to explicitly
+import a photo of your own clothes.
+
 ## Styling and weather
 
 Set `location <city>` and choose from geocoding matches, or provide explicit

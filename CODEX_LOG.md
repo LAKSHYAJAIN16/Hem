@@ -74,3 +74,11 @@ Validation: 19 tests passed, covering multi-item photo confirmation, owner isola
 model-output validation, weather ranking, citations, care counters, request approval,
 webhook queue acknowledgement, replay receipts, and HTTP access controls. Live weather
 and public webhook health/signature checks passed. The operator enabled reply delivery.
+
+## 2026-09-19 — Recreate a reference outfit
+
+Added inspiration-photo routing for captions such as 'match this look' and an explicit
+API photo mode. Reference attributes guide owned-wardrobe selection without importing
+the photographed garments. Existing unconfirmed photo drafts can also be used as
+references with `style photo <ID>`. Added owner-isolation and no-import regressions;
+the complete suite passes 21 tests.

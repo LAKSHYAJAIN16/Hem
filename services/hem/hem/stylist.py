@@ -22,7 +22,7 @@ def short_id():
     return uuid.uuid4().hex[:10]
 
 
-def recommend(db, user_id, occasion, today, weather=None):
+def recommend(db, user_id, occasion, today, weather=None, inspiration=None):
     items = [dict(r) for r in db.execute('SELECT * FROM garments WHERE user_id=? AND available=1 ORDER BY rowid', (user_id,))]
     groups = {category: [i for i in items if i['category'] == category] for category in CATEGORIES}
     # Bound combination work; this starter is meant for small personal wardrobes.
@@ -40,6 +40,11 @@ def recommend(db, user_id, occasion, today, weather=None):
     def score(outfit):
         text = ' '.join(i['description'].lower() for i in outfit)
         taste = sum((3 if p['sentiment'] == 'like' else -8) for p in preferences if p['value'] in text)
+        if inspiration:
+            for item in outfit:
+                words = set(re.findall(r'[a-z]{3,}', item['description'].lower()))
+                references = [r for r in inspiration if r['category'] == item['category']]
+                taste += 4 * max((len(words & set(re.findall(r'[a-z]{3,}', r['description'].lower()))) for r in references), default=0)
         return taste + context_score(outfit, occasion, weather) - sum(recently_worn.get(i['id'], 0) * 5 for i in outfit)
     outfit = max(candidates, key=score)
     if weather and weather['feels_like_low_c'] < 15 and groups['outerwear']:

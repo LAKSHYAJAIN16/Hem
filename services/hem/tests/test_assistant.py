@@ -253,3 +253,34 @@ def test_webhook_ack_precedes_ai_and_replay_does_not_repeat_work(tmp_path, monke
     assert run(restarted.reply(receipt['user_id'], 'different text', request_id='slow-event')) == receipt['reply']
     with restarted.store.connect() as db:
         assert db.execute('SELECT count(*) FROM conversations').fetchone()[0] == 2
+
+
+def test_inspiration_photo_matches_owned_clothes_without_importing(tmp_path):
+    store = Store(tmp_path / 'hem.db')
+    ai = FakeAI()
+    engine = Assistant(store, ai=ai)
+    for item in ('top: navy sweater', 'bottom: blue trousers', 'shoes: white sneakers'):
+        run(engine.reply('a', 'add ' + item))
+    ids = [g['id'] for g in store.snapshot('a')['wardrobe']]
+    ai.advice = Advice(answer='Use your navy sweater and trousers; your sneakers make it more casual.', item_ids=ids, source_ids=[])
+    reply = run(engine.reply('a', "Match this look from someone's outfit", [IMAGE]))
+    assert 'Recreating the reference look' in reply
+    assert ai.context['inspiration_garments'][0]['description'] == 'navy sweater'
+    assert [g['id'] for g in store.snapshot('a')['wardrobe']] == ids
+    with store.connect() as db:
+        assert db.execute('SELECT count(*) FROM photo_drafts').fetchone()[0] == 0
+        assert db.execute('SELECT count(*) FROM photo_assets').fetchone()[0] == 0
+    assert not store.snapshot('a')['wears']
+
+
+def test_existing_draft_can_be_styled_without_confirmation(tmp_path):
+    store = Store(tmp_path / 'hem.db')
+    ai = FakeAI()
+    engine = Assistant(store, ai=ai)
+    reply = run(engine.reply('a', '', [IMAGE]))
+    draft = re.search(r'Photo ([a-f0-9]{10})', reply)[1]
+    ai.advice = Advice(answer='Add some owned clothes first so I can find a match.', item_ids=[], source_ids=[])
+    run(engine.reply('a', f'style photo {draft}'))
+    assert ai.context['inspiration_garments']
+    assert not store.snapshot('a')['wardrobe']
+    assert 'not available' in run(engine.reply('b', f'style photo {draft}'))
